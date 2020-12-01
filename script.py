@@ -1,12 +1,14 @@
+#!/usr/bin/python3
+
 import struct
 import re
 from pwnlib.asm import disasm, asm
 import pprint
 
-asm_file = "DATA/fingerprint.goodix.default.asm"
-functions_file = "DATA/fingerprint.goodix.default_f"
+asm_file = "DATA/libfp_client.asm"
+functions_file = "DATA/libfp_client_f"
 truth_file = None # "libfp_client5118m_new.asm"
-output_file = "WORKING/fingerprint.goodix.default.so"
+output_file = "WORKING/libfp_client.so"
 
 # Helpers for patching
 def unpack_instr(s):
@@ -14,15 +16,24 @@ def unpack_instr(s):
 	if '#0x' in d:
 		return int(re.findall(r"#0x?([0-9A-Fa-f]+)", d)[0], 16), d
 	else:
-		return int(re.findall(r"#[-]?(\d+)", d)[0], 10), d
+		try:
+			return int(re.findall(r"#[-]?(\d+)", d)[0], 10), d
+		except IndexError:
+			return int("0", 10), d
 
 def patch_command(v, d):
+	print(d)
 	t = d.split()[2]
 	if t == 'add':
-		return d.replace('#'+hex(v), '#'+hex(v+0x10))
+		if d.split()[3] == 'sp,' and d.split()[4] == 'sp,':
+			return d.replace('#'+hex(v), '#'+hex(v+0x20))
+		else:
+			return d.replace('#'+hex(v), '#'+hex(v+0x10))
 	else:
-		if t == 'stp':
-			return d.replace('#-'+str(v), '#-'+str(v+32))
+		if t == 'sub':
+			return d.replace('#'+hex(v), '#'+hex(v+0x20))
+#		elif t == 'stp':
+#			return d.replace('#-'+str(v), '#-'+str(v+32))
 		else:
 			return d.replace('#'+str(v), '#'+str(v+32))
 
@@ -66,7 +77,7 @@ for i in range(len(functions)):
 			relevant_lines = lines[begin+1:end]
 			ret = []
 			for line in relevant_lines:
-				if ('x29' in line) and any(x in line for x in ['add','ldp','ldr','str','stp']):
+				if ('sp' in line) and any(x in line for x in ['add','ldp','ldr','str','stp','sub']):
 					address, data = line[:-1].split()[:2]
 					data_b = struct.pack('<I', int(data, 16))
 					ret.append((int(address[:-1], 16), data_b))
@@ -84,7 +95,7 @@ if truth_file:
 					relevant_lines = lines_truth[begin+1:end]
 					ret = []
 					for line in relevant_lines:
-						if ('x29' in line) and any(x in line for x in ['add','ldp','ldr','str','stp']):
+						if ('sp' in line) and any(x in line for x in ['add','ldp','ldr','str','stp','sub']):
 							address, data = line[:-1].split()[:2]
 							data_b = struct.pack('<I', int(data, 16))
 							ret.append((int(address[:-1], 16), data_b))
@@ -98,11 +109,11 @@ with open(output_file, "r+b") as f:
 		relevant_code = relevant[i]
 		initial_pos = relevant_code[0]
 		begin, initial_instr = unpack_instr(initial_pos[1])
-		if 'stp' in initial_instr:
+		if 'sub' in initial_instr:
 			begin = begin
 			end = begin-104
 		else:
-			print("ERROR: No stp found")
+			print("ERROR: No sub found")
 			break
 		print("Begin : " + str(begin) + " | End : " + str(end))
 		new_initial_instr, initial_patch = patch_instr(begin, initial_instr)
